@@ -1,90 +1,206 @@
-<!DOCTYPE html>
-<html lang="cs">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AK4Y Dispatch</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div id="app" class="hidden">
-        <aside class="sidebar">
-            <div class="header">
-                <h1>AK4Y</h1>
-                <span>Dispatch</span>
-            </div>
+ESX = nil
 
-            <div class="toolbar">
-                <button id="newIncidentBtn">Nové upozornění</button>
-                <button id="requestBackupBtn">Záloha</button>
-                <button id="panicBtn" class="panic">PANIC</button>
-            </div>
+Citizen.CreateThread(function()
+    while ESX == nil do
+        TriggerEvent('esx:getSharedObject', function(obj)
+            ESX = obj
+        end)
+        Citizen.Wait(0)
+    end
+end)
 
-            <div class="filter-box">
-                <label for="incidentType">Typ:</label>
-                <select id="incidentType">
-                    <option value="Přestupková událost">Přestupková událost</option>
-                    <option value="Bojový incident">Bojový incident</option>
-                    <option value="Autonehoda">Autonehoda</option>
-                    <option value="Přepadení">Přepadení</option>
-                    <option value="Drogová aktivita">Drogová aktivita</option>
-                    <option value="Násilný trestný čin">Násilný trestný čin</option>
-                    <option value="Ochrana civilistů">Ochrana civilistů</option>
-                    <option value="Ostatní">Ostatní</option>
-                </select>
+local isOpen = false
+local dispatchData = {
+    incidents = {},
+    history = {},
+    blockedAreas = {}
+}
 
-                <label for="priority">Priorita:</label>
-                <select id="priority">
-                    <option value="low">Nízká</option>
-                    <option value="medium" selected>Střední</option>
-                    <option value="high">Vysoká</option>
-                </select>
-            </div>
+local function showNotification(msg)
+    if ESX and ESX.ShowNotification then
+        ESX.ShowNotification(msg)
+    else
+        TriggerEvent('esx:showNotification', msg)
+    end
+end
 
-            <div class="incident-list" id="incidentList"></div>
-        </aside>
+local function getPlayerCoords()
+    local ped = PlayerPedId()
+    local coords = GetEntityCoords(ped)
+    return {
+        x = coords.x,
+        y = coords.y,
+        z = coords.z
+    }
+end
 
-        <main class="content">
-            <div class="top-bar">
-                <div>
-                    <h2>Řídicí panel MDT</h2>
-                    <p>Live monitoring operací</p>
-                </div>
-                <div class="buttons">
-                    <button class="small" id="refreshBtn">Obnovit</button>
-                    <button class="small danger" id="closeBtn">Zavřít</button>
-                </div>
-            </div>
+local function hasAccess()
+    if ESX and ESX.GetPlayerData then
+        local playerData = ESX.GetPlayerData()
+        if playerData.job and Config.DispatchJobs[playerData.job.name] then
+            return true
+        end
+    end
 
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <span>Celkem</span>
-                    <strong id="totalCount">0</strong>
-                </div>
-                <div class="stat-card yellow">
-                    <span>Otevřeno</span>
-                    <strong id="openCount">0</strong>
-                </div>
-                <div class="stat-card red">
-                    <span>V řešení</span>
-                    <strong id="inProgressCount">0</strong>
-                </div>
-                <div class="stat-card green">
-                    <span>Vyřešeno</span>
-                    <strong id="solvedCount">0</strong>
-                </div>
-            </div>
+    return false
+end
 
-            <div class="detail-panel" id="detailPanel">
-                <div class="empty-state">
-                    <h3>Vyberte upozornění</h3>
-                    <p>Detail operace se zobrazí zde.</p>
-                </div>
-            </div>
-        </main>
-    </div>
+RegisterCommand('dispatcher', function()
+    if not hasAccess() then
+        showNotification('Nemáš přístup k dispečerskému systému.')
+        return
+    end
+    TriggerServerEvent('ak4y_dispatcher:openMdt')
+end, false)
 
-    <script src="nui://game/ui/jquery.js" type="text/javascript"></script>
-    <script src="app.js"></script>
-</body>
-</html>
+RegisterKeyMapping('dispatcher', 'Open AK4Y MDT', 'keyboard', Config.DispatchKey)
+
+RegisterNetEvent('ak4y_dispatcher:openMdtClient', function()
+    SetNuiFocus(true, true)
+    isOpen = true
+    SendNUIMessage({ type = 'open' })
+    TriggerServerEvent('ak4y_dispatcher:requestSync')
+end)
+
+RegisterNetEvent('ak4y_dispatcher:syncIncidents', function(data)
+    dispatchData = data or {
+        incidents = {},
+        history = {},
+        blockedAreas = {}
+    }
+
+    SendNUIMessage({
+        type = 'sync',
+        data = dispatchData
+    })
+end)
+
+RegisterNetEvent('ak4y_dispatcher:setWaypoint', function(coords)
+    if coords then
+        SetNewWaypoint(coords.x, coords.y)
+        showNotification('Waypoint byl nastaven na lokaci incidentu.')
+    end
+end)
+
+RegisterNUICallback('close', function(_, cb)
+    SetNuiFocus(false, false)
+    isOpen = false
+    cb('ok')
+end)
+
+RegisterNUICallback('requestSync', function(_, cb)
+    TriggerServerEvent('ak4y_dispatcher:requestSync')
+    cb('ok')
+end)
+
+RegisterNUICallback('createIncident', function(data, cb)
+    if not data or not data.title then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:createIncident', {
+        title = data.title,
+        type = data.type or 'Ostatní',
+        priority = data.priority or 'medium',
+        notes = data.notes or '',
+        emergency = data.emergency or false,
+        coords = getPlayerCoords()
+    })
+
+    cb('ok')
+end)
+
+RegisterNUICallback('setStatus', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:setStatus', data.id, data.status)
+    cb('ok')
+end)
+
+RegisterNUICallback('setPriority', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:setPriority', data.id, data.priority)
+    cb('ok')
+end)
+
+RegisterNUICallback('requestBackup', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:requestBackup', data.id, data.backupType or 'Záloha')
+    cb('ok')
+end)
+
+RegisterNUICallback('panicButton', function(_, cb)
+    TriggerServerEvent('ak4y_dispatcher:panicButton')
+    cb('ok')
+end)
+
+RegisterNUICallback('blockArea', function(data, cb)
+    local radius = data and data.radius or 100.0
+    TriggerServerEvent('ak4y_dispatcher:blockArea', getPlayerCoords(), radius)
+    cb('ok')
+end)
+
+RegisterNUICallback('clearHistory', function(_, cb)
+    TriggerServerEvent('ak4y_dispatcher:clearHistory')
+    cb('ok')
+end)
+
+RegisterNUICallback('removeIncident', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:removeIncident', data.id)
+    cb('ok')
+end)
+
+RegisterNUICallback('registerResponder', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:registerResponder', data.id)
+    cb('ok')
+end)
+
+RegisterNUICallback('setWaypoint', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
+
+    TriggerServerEvent('ak4y_dispatcher:waypointIncident', data.id)
+    cb('ok')
+end)
+
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(100)
+        if isOpen then
+            DisableControlAction(0, 1, true)
+            DisableControlAction(0, 2, true)
+            DisableControlAction(0, 24, true)
+            DisableControlAction(0, 25, true)
+            DisableControlAction(0, 45, true)
+            DisableControlAction(0, 140, true)
+            DisableControlAction(0, 142, true)
+            DisableControlAction(0, 263, true)
+            DisableControlAction(0, 264, true)
+            DisableControlAction(0, 257, true)
+        end
+    end
+end)

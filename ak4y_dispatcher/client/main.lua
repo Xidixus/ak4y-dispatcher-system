@@ -1,149 +1,355 @@
 ESX = nil
 
-Citizen.CreateThread(function()
-    while ESX == nil do
-        TriggerEvent('esx:getSharedObject', function(obj)
-            ESX = obj
-        end)
-        Citizen.Wait(0)
-    end
+TriggerEvent('esx:getSharedObject', function(obj)
+    ESX = obj
 end)
 
-local isOpen = false
-local currentIncidents = {}
+local incidents = {}
+local blockedAreas = {}
+local history = {}
 
-local function showNotification(msg)
-    if ESX and ESX.ShowNotification then
-        ESX.ShowNotification(msg)
-    else
-        TriggerEvent('esx:showNotification', msg)
+local function getPlayerName(playerId)
+    local xPlayer = ESX.GetPlayerFromId(playerId)
+    if xPlayer and xPlayer.getName then
+        return xPlayer.getName()
+    end
+    return 'Neznámý důstojník'
+end
+
+local function isDispatchAllowed(playerId)
+    if not playerId then
+        return false
+    end
+
+    local xPlayer = ESX.GetPlayerFromId(playerId)
+    if not xPlayer then
+        return false
+    end
+
+    if xPlayer.getGroup and xPlayer.getGroup() == 'admin' then
+        return true
+    end
+
+    if xPlayer.job and Config.DispatchJobs[xPlayer.job.name] then
+        return true
+    end
+
+    local item = xPlayer.getInventoryItem(Config.RequiredItem)
+    if item and item.count > 0 then
+        return true
+    end
+
+    local backupItem = xPlayer.getInventoryItem(Config.RequiredItemBackup)
+    if backupItem and backupItem.count > 0 then
+        return true
+    end
+
+    return false
+end
+
+local function pushHistory(text)
+    table.insert(history, {
+        time = os.date('%d.%m.%Y %H:%M:%S'),
+        text = text
+    })
+
+    while #history > Config.MaxHistoryEntries do
+        table.remove(history, 1)
     end
 end
 
-local function getPlayerCoords()
-    local ped = PlayerPedId()
-    local coords = GetEntityCoords(ped)
-    return {
-        x = coords.x,
-        y = coords.y,
-        z = coords.z
-    }
+local function syncDispatch(target)
+    TriggerClientEvent('ak4y_dispatcher:syncIncidents', target, {
+        incidents = incidents,
+        history = history,
+        blockedAreas = blockedAreas
+    })
 end
 
-RegisterCommand('dispatcher', function()
-    TriggerServerEvent('ak4y_dispatcher:openMdt')
+local function notifyAll(message)
+    TriggerClientEvent('esx:showAdvancedNotification', -1, 'AK4Y', 'Dispatch', message, 'CHAR_CALL911', 9)
+end
+
+local function createId()
+    return 'AK4Y-' .. tostring(os.time()) .. '-' .. tostring(math.random(1000, 9999))
+end
+
+local function checkBlockedArea(coords)
+    if not coords then
+        return false
+    end
+
+    for _, area in ipairs(blockedAreas) do
+        local dx = coords.x - area.x
+        local dy = coords.y - area.y
+        local dz = coords.z - area.z
+        local distance = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+
+        if distance <= area.radius then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function addResponderToIncident(id, responderName)
+    for _, incident in ipairs(incidents) do
+        if incident.id == id then
+            local exists = false
+            for _, existing in ipairs(incident.responders) do
+                if existing == responderName then
+                    exists = true
+                    break
+                end
+            end
+
+            if not exists then
+                table.insert(incident.responders, responderName)
+                incident.updatedAt = os.date('%d.%m.%Y %H:%M:%S')
+            end
+            return
+        end
+    end
+end
+
+RegisterCommand('dispatcher', function(source)
+    if not isDispatchAllowed(source) then
+        TriggerClientEvent('esx:showNotification', source, 'Nemáš přístup k dispečerskému systému.')
+        return
+    end
+
+    TriggerClientEvent('ak4y_dispatcher:openMdtClient', source)
 end, false)
 
-RegisterKeyMapping('dispatcher', 'Open AK4Y MDT', 'keyboard', Config.DispatchKey)
-
-RegisterNetEvent('ak4y_dispatcher:openMdtClient', function()
-    SetNuiFocus(true, true)
-    isOpen = true
-    SendNUIMessage({
-        type = 'open'
-    })
-    TriggerServerEvent('ak4y_dispatcher:requestSync')
-end)
-
-RegisterNetEvent('ak4y_dispatcher:syncIncidents', function(data)
-    currentIncidents = data or {}
-    SendNUIMessage({
-        type = 'sync',
-        incidents = currentIncidents
-    })
-end)
-
-RegisterNetEvent('ak4y_dispatcher:notify', function(msg)
-    showNotification(msg)
-end)
-
-RegisterNUICallback('close', function(data, cb)
-    SetNuiFocus(false, false)
-    isOpen = false
-    cb('ok')
-end)
-
-RegisterNUICallback('requestSync', function(data, cb)
-    TriggerServerEvent('ak4y_dispatcher:requestSync')
-    cb('ok')
-end)
-
-RegisterNUICallback('createIncident', function(data, cb)
-    local payload = data or {}
-    local coords = getPlayerCoords()
-
-    TriggerServerEvent('ak4y_dispatcher:createIncident', {
-        title = payload.title or 'Neznámé upozornění',
-        type = payload.type or 'Ostatní',
-        priority = payload.priority or 'medium',
-        notes = payload.notes or '',
-        emergency = payload.emergency or false,
-        coords = coords
-    })
-
-    cb('ok')
-end)
-
-RegisterNUICallback('setStatus', function(data, cb)
-    if not data or not data.id then
-        cb('error')
+RegisterNetEvent('ak4y_dispatcher:openMdt', function()
+    local src = source
+    if not isDispatchAllowed(src) then
+        TriggerClientEvent('esx:showNotification', src, 'Nemáš oprávnění pro MDT.')
         return
     end
 
-    TriggerServerEvent('ak4y_dispatcher:setStatus', data.id, data.status)
-    cb('ok')
+    TriggerClientEvent('ak4y_dispatcher:openMdtClient', src)
 end)
 
-RegisterNUICallback('setPriority', function(data, cb)
-    if not data or not data.id then
-        cb('error')
+RegisterNetEvent('ak4y_dispatcher:requestSync', function()
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+    syncDispatch(src)
+end)
+
+RegisterNetEvent('ak4y_dispatcher:createIncident', function(data)
+    local src = source
+    if not isDispatchAllowed(src) then
+        TriggerClientEvent('esx:showNotification', src, 'Nemáš oprávnění vytvořit upozornění.')
         return
     end
 
-    TriggerServerEvent('ak4y_dispatcher:setPriority', data.id, data.priority)
-    cb('ok')
-end)
-
-RegisterNUICallback('requestBackup', function(data, cb)
-    if not data or not data.id then
-        cb('error')
+    if not data or not data.title then
+        TriggerClientEvent('esx:showNotification', src, 'Některé údaje jsou neplatné.')
         return
     end
 
-    TriggerServerEvent('ak4y_dispatcher:requestBackup', data.id, data.backupType or 'Záloha')
-    cb('ok')
+    local coords = data.coords or { x = 0.0, y = 0.0, z = 0.0 }
+    if checkBlockedArea(coords) then
+        TriggerClientEvent('esx:showNotification', src, 'Tato oblast je zablokována pro nová upozornění.')
+        return
+    end
+
+    local incident = {
+        id = createId(),
+        title = tostring(data.title),
+        type = tostring(data.type or 'Ostatní'),
+        priority = tostring(data.priority or 'medium'),
+        status = 'open',
+        createdAt = os.date('%d.%m.%Y %H:%M:%S'),
+        createdBy = getPlayerName(src),
+        coords = {
+            x = tonumber(coords.x) or 0.0,
+            y = tonumber(coords.y) or 0.0,
+            z = tonumber(coords.z) or 0.0
+        },
+        responders = {},
+        notes = tostring(data.notes or ''),
+        backupRequested = false,
+        emergency = data.emergency or false,
+        updatedAt = os.date('%d.%m.%Y %H:%M:%S')
+    }
+
+    table.insert(incidents, incident)
+    pushHistory(('Vytvořeno nové upozornění: %s | by %s'):format(incident.title, incident.createdBy))
+
+    notifyAll(('Přijato nové upozornění: %s'):format(incident.title))
+    TriggerClientEvent('chat:addMessage', -1, {
+        color = {255, 140, 0},
+        multiline = false,
+        args = {'[DISPATCH]', ('Přijato nové upozornění: %s'):format(incident.title)}
+    })
+
+    syncDispatch(-1)
 end)
 
-RegisterNUICallback('panicButton', function(data, cb)
-    TriggerServerEvent('ak4y_dispatcher:panicButton')
-    cb('ok')
+RegisterNetEvent('ak4y_dispatcher:setStatus', function(id, status)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    for _, incident in ipairs(incidents) do
+        if incident.id == id then
+            incident.status = tostring(status or 'open')
+            incident.updatedBy = getPlayerName(src)
+            incident.updatedAt = os.date('%d.%m.%Y %H:%M:%S')
+            pushHistory(('Upozornění %s změněno na %s | by %s'):format(incident.title, incident.status, getPlayerName(src)))
+            break
+        end
+    end
+
+    syncDispatch(-1)
 end)
 
-RegisterNUICallback('blockArea', function(data, cb)
-    local coords = getPlayerCoords()
-    TriggerServerEvent('ak4y_dispatcher:blockArea', coords, data and data.radius or 100.0)
-    cb('ok')
+RegisterNetEvent('ak4y_dispatcher:setPriority', function(id, priority)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    for _, incident in ipairs(incidents) do
+        if incident.id == id then
+            incident.priority = tostring(priority or 'medium')
+            incident.updatedBy = getPlayerName(src)
+            incident.updatedAt = os.date('%d.%m.%Y %H:%M:%S')
+            pushHistory(('Priorita upozornění %s změněna na %s | by %s'):format(incident.title, incident.priority, getPlayerName(src)))
+            break
+        end
+    end
+
+    syncDispatch(-1)
 end)
 
-RegisterNUICallback('clearHistory', function(data, cb)
-    TriggerServerEvent('ak4y_dispatcher:clearHistory')
-    cb('ok')
+RegisterNetEvent('ak4y_dispatcher:registerResponder', function(id)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    addResponderToIncident(id, getPlayerName(src))
+    pushHistory(('Důstojník %s se přidal k upozornění %s'):format(getPlayerName(src), id))
+    syncDispatch(-1)
+end)
+
+RegisterNetEvent('ak4y_dispatcher:requestBackup', function(id, backupType)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    for _, incident in ipairs(incidents) do
+        if incident.id == id then
+            incident.backupRequested = true
+            incident.backupType = tostring(backupType or 'Záloha')
+            incident.updatedBy = getPlayerName(src)
+            incident.updatedAt = os.date('%d.%m.%Y %H:%M:%S')
+            pushHistory(('Žádost o zálohu pro %s: %s | by %s'):format(incident.title, incident.backupType, getPlayerName(src)))
+            break
+        end
+    end
+
+    notifyAll('Byla vyžádána záloha pro aktivní incident.')
+    syncDispatch(-1)
+end)
+
+RegisterNetEvent('ak4y_dispatcher:panicButton', function()
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    local name = getPlayerName(src)
+    local message = ('Nouzové varování: %s aktivoval panický tlačítko.'):format(name)
+    pushHistory(message)
+    notifyAll(message)
+    TriggerClientEvent('chat:addMessage', -1, {
+        color = {255, 0, 0},
+        multiline = false,
+        args = {'[PANIC]', message}
+    })
+end)
+
+RegisterNetEvent('ak4y_dispatcher:blockArea', function(coords, radius)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    if not coords then
+        return
+    end
+
+    local area = {
+        x = tonumber(coords.x) or 0.0,
+        y = tonumber(coords.y) or 0.0,
+        z = tonumber(coords.z) or 0.0,
+        radius = tonumber(radius) or 100.0,
+        createdBy = getPlayerName(src)
+    }
+
+    table.insert(blockedAreas, area)
+    pushHistory(('Oblast zablokována pro nové upozornění: %s m | by %s'):format(area.radius, getPlayerName(src)))
+    TriggerClientEvent('esx:showNotification', src, 'Oblast byla zablokována pro nové události.')
+    syncDispatch(-1)
+end)
+
+RegisterNetEvent('ak4y_dispatcher:clearHistory', function()
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    incidents = {}
+    blockedAreas = {}
+    history = {}
+    pushHistory(('Historie protokolů byla vymazána důstojníkem %s'):format(getPlayerName(src)))
+    TriggerClientEvent('esx:showNotification', src, 'Historie protokolů byla vymazána.')
+    syncDispatch(-1)
+end)
+
+RegisterNetEvent('ak4y_dispatcher:removeIncident', function(id)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    for i = #incidents, 1, -1 do
+        if incidents[i].id == id then
+            table.remove(incidents, i)
+            pushHistory(('Upozornění %s bylo odstraněno | by %s'):format(id, getPlayerName(src)))
+            break
+        end
+    end
+
+    syncDispatch(-1)
+end)
+
+RegisterNetEvent('ak4y_dispatcher:waypointIncident', function(id)
+    local src = source
+    if not isDispatchAllowed(src) then
+        return
+    end
+
+    for _, incident in ipairs(incidents) do
+        if incident.id == id then
+            TriggerClientEvent('ak4y_dispatcher:setWaypoint', src, incident.coords)
+            break
+        end
+    end
 end)
 
 Citizen.CreateThread(function()
     while true do
-        Citizen.Wait(100)
-        if isOpen then
-            DisableControlAction(0, 1, true)
-            DisableControlAction(0, 2, true)
-            DisableControlAction(0, 24, true)
-            DisableControlAction(0, 25, true)
-            DisableControlAction(0, 45, true)
-            DisableControlAction(0, 140, true)
-            DisableControlAction(0, 142, true)
-            DisableControlAction(0, 263, true)
-            DisableControlAction(0, 264, true)
-            DisableControlAction(0, 257, true)
-        end
+        Citizen.Wait(5000)
+        syncDispatch(-1)
     end
 end)

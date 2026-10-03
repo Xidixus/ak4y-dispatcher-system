@@ -3,14 +3,16 @@ Config = {}
 Config.DispatchJobs = {
     police = true,
     sheriff = true,
-    ambulance = true
+    ambulance = true,
+    fib = true
 }
 
+Config.DispatchKey = 'F7'
 Config.RequiredItem = 'dispatch_card'
 Config.RequiredItemBackup = 'mdt_access'
-Config.DispatchKey = 'F7'
-Config.UseCommand = true
+Config.EnableCommand = true
 Config.ShowNotifications = true
+Config.MaxHistoryEntries = 200
 
 Config.IncidentTypes = {
     'Přestupková událost',
@@ -34,6 +36,14 @@ Config.IncidentStatuses = {
     inprogress = 'Řeší se',
     closed = 'Uzavřeno',
     solved = 'Vyřešeno'
+}
+
+Config.EmergencyServices = {
+    ambulance = 'Záchranná služba',
+    mechanic = 'Odtah',
+    sheriff = 'Sheriff',
+    police = 'Police',
+    backup = 'Záloha'
 }
 
 Config.BlockedAreas = {}

@@ -1,21 +1,9 @@
-fx_version 'cerulean'
-games { 'gta5' }
+INSERT INTO `items` (`name`, `label`, `weight`, `rare`, `can_remove`) VALUES
+('dispatch_card', 'Policejní MDT karta', 0, 0, 1),
+('mdt_access', 'Přístup k dispečerskému systému', 0, 0, 1);
 
-lua54 'yes'
-
-author 'Copilot'
-description 'AK4Y Dispatcher ESX'
-version '1.0.0'
-
-shared_script 'config.lua'
-
-server_script 'server/main.lua'
-client_script 'client/main.lua'
-
-ui_page 'html/index.html'
-
-files {
-    'html/index.html',
-    'html/style.css',
-    'html/app.js'
-}
+INSERT INTO `jobs` (`name`, `label`, `whitelisted`) VALUES
+('police', 'Policejní složka', 0),
+('sheriff', 'Sheriff', 0),
+('ambulance', 'Záchranná služba', 0),
+('fib', 'FBI', 0);
