@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AK4Y Dispatch</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app" class="hidden">
+        <aside class="sidebar">
+            <div class="header">
+                <h1>AK4Y</h1>
+                <span>Dispatch</span>
+            </div>
+
+            <div class="toolbar">
+                <button id="newIncidentBtn">Nové upozornění</button>
+                <button id="requestBackupBtn">Záloha</button>
+                <button id="panicBtn" class="panic">PANIC</button>
+            </div>
+
+            <div class="filter-box">
+                <label for="incidentType">Typ:</label>
+                <select id="incidentType">
+                    <option value="Přestupková událost">Přestupková událost</option>
+                    <option value="Bojový incident">Bojový incident</option>
+                    <option value="Autonehoda">Autonehoda</option>
+                    <option value="Přepadení">Přepadení</option>
+                    <option value="Drogová aktivita">Drogová aktivita</option>
+                    <option value="Násilný trestný čin">Násilný trestný čin</option>
+                    <option value="Ochrana civilistů">Ochrana civilistů</option>
+                    <option value="Ostatní">Ostatní</option>
+                </select>
+
+                <label for="priority">Priorita:</label>
+                <select id="priority">
+                    <option value="low">Nízká</option>
+                    <option value="medium" selected>Střední</option>
+                    <option value="high">Vysoká</option>
+                </select>
+            </div>
+
+            <div class="incident-list" id="incidentList"></div>
+        </aside>
+
+        <main class="content">
+            <div class="top-bar">
+                <div>
+                    <h2>Řídicí panel MDT</h2>
+                    <p>Live monitoring operací</p>
+                </div>
+                <div class="buttons">
+                    <button class="small" id="refreshBtn">Obnovit</button>
+                    <button class="small danger" id="closeBtn">Zavřít</button>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span>Celkem</span>
+                    <strong id="totalCount">0</strong>
+                </div>
+                <div class="stat-card yellow">
+                    <span>Otevřeno</span>
+                    <strong id="openCount">0</strong>
+                </div>
+                <div class="stat-card red">
+                    <span>V řešení</span>
+                    <strong id="inProgressCount">0</strong>
+                </div>
+                <div class="stat-card green">
+                    <span>Vyřešeno</span>
+                    <strong id="solvedCount">0</strong>
+                </div>
+            </div>
+
+            <div class="detail-panel" id="detailPanel">
+                <div class="empty-state">
+                    <h3>Vyberte upozornění</h3>
+                    <p>Detail operace se zobrazí zde.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="nui://game/ui/jquery.js" type="text/javascript"></script>
+    <script src="app.js"></script>
+</body>
+</html>
