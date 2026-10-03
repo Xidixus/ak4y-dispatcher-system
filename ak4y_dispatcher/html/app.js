@@ -1,319 +1,220 @@
-body {
-    margin: 0;
-    font-family: 'Segoe UI', sans-serif;
-    background: rgba(6, 12, 20, 0.68);
-    color: white;
+ESX = nil
+
+Citizen.CreateThread(function()
+    while ESX == nil do
+        TriggerEvent('esx:getSharedObject', function(obj)
+            ESX = obj
+        end)
+        Citizen.Wait(0)
+    end
+end)
+
+local isOpen = false
+local dispatchData = {
+    incidents = {},
+    history = {},
+    blockedAreas = {},
+    emergencyCalls = {}
 }
 
-.hidden { display: none; }
+local function showNotification(msg)
+    if ESX and ESX.ShowNotification then
+        ESX.ShowNotification(msg)
+    else
+        TriggerEvent('esx:showNotification', msg)
+    end
+end
 
-#app {
-    width: 100vw;
-    height: 100vh;
-    display: flex;
-    background: linear-gradient(135deg, rgba(8, 12, 18, 0.96), rgba(12, 19, 28, 0.95));
-    border: 1px solid rgba(255,255,255,0.06);
-}
+local function getPlayerCoords()
+    local ped = PlayerPedId()
+    local coords = GetEntityCoords(ped)
+    return {
+        x = coords.x,
+        y = coords.y,
+        z = coords.z
+    }
+end
 
-.sidebar {
-    width: 360px;
-    background: rgba(15, 20, 28, 0.96);
-    border-right: 1px solid rgba(255,255,255,0.08);
-    padding: 18px 14px;
-    box-sizing: border-box;
-}
+local function hasAccess()
+    if ESX and ESX.GetPlayerData then
+        local playerData = ESX.GetPlayerData()
+        if playerData.job and Config.DispatchJobs[playerData.job.name] then
+            return true
+        end
+    end
 
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
+    return false
+end
 
-.header h1 {
-    margin: 0;
-    font-size: 2.1rem;
-    color: #6cd3ff;
-    letter-spacing: 0.08em;
-}
+RegisterCommand('dispatcher', function()
+    if not hasAccess() then
+        showNotification('Nemáš přístup k dispečerskému systému.')
+        return
+    end
+    TriggerServerEvent('ak4y_dispatcher:openMdt')
+end, false)
 
-.header span {
-    color: #abcfe9;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-}
+RegisterCommand('911', function(source, args, rawCommand)
+    local message = table.concat(args, ' ')
+    if message == '' then
+        showNotification('Zadej: /911 Zpráva')
+        return
+    end
+    TriggerServerEvent('ak4y_dispatcher:call911', message)
+end, false)
 
-.toolbar {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-    margin-top: 14px;
-}
+RegisterKeyMapping('dispatcher', 'Open AK4Y MDT', 'keyboard', Config.DispatchKey)
+RegisterKeyMapping('911', 'Call 911 Emergency', 'keyboard', 'LMENU')
 
-button {
-    border: 0;
-    border-radius: 8px;
-    padding: 10px 8px;
-    background: rgba(108, 211, 255, 0.14);
-    color: white;
-    cursor: pointer;
-    font-weight: 600;
-}
+RegisterNetEvent('ak4y_dispatcher:openMdtClient', function()
+    SetNuiFocus(true, true)
+    isOpen = true
+    SendNUIMessage({ type = 'open' })
+    TriggerServerEvent('ak4y_dispatcher:requestSync')
+end)
 
-button:hover { filter: brightness(1.08); }
-button.primary { background: rgba(108, 211, 255, 0.22); }
-button.danger { background: rgba(255, 86, 86, 0.18); }
-button.panic {
-    background: rgba(255, 73, 73, 0.18);
-    color: #ffb0b0;
-}
-button.small {
-    padding: 8px 10px;
-    font-size: 0.75rem;
-}
+RegisterNetEvent('ak4y_dispatcher:syncIncidents', function(data)
+    dispatchData = data or {
+        incidents = {},
+        history = {},
+        blockedAreas = {},
+        emergencyCalls = {}
+    }
 
-.quick-form {
-    margin-top: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
+    SendNUIMessage({
+        type = 'sync',
+        data = dispatchData
+    })
+end)
 
-.quick-form label {
-    color: #aad6f6;
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
+RegisterNetEvent('ak4y_dispatcher:setWaypoint', function(coords)
+    if coords then
+        SetNewWaypoint(coords.x, coords.y)
+        showNotification('Waypoint byl nastaven na lokaci incidentu.')
+    end
+end)
 
-.quick-form select,
-.quick-form input,
-.quick-form textarea {
-    width: 100%;
-    box-sizing: border-box;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    color: white;
-    border-radius: 8px;
-    padding: 10px 12px;
-}
+RegisterNUICallback('close', function(_, cb)
+    SetNuiFocus(false, false)
+    isOpen = false
+    cb('ok')
+end)
 
-.quick-form textarea {
-    min-height: 72px;
-    resize: vertical;
-}
+RegisterNUICallback('requestSync', function(_, cb)
+    TriggerServerEvent('ak4y_dispatcher:requestSync')
+    cb('ok')
+end)
 
-.incident-list {
-    margin-top: 18px;
-    max-height: calc(100vh - 510px);
-    overflow-y: auto;
-    padding-right: 4px;
-}
+RegisterNUICallback('createIncident', function(data, cb)
+    if not data or not data.title then
+        cb('error')
+        return
+    end
 
-.incident-item {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-left: 4px solid #5cc7ff;
-    border-radius: 10px;
-    padding: 12px;
-    margin-bottom: 10px;
-    cursor: pointer;
-}
+    TriggerServerEvent('ak4y_dispatcher:createIncident', {
+        title = data.title,
+        type = data.type or 'Ostatní',
+        priority = data.priority or 'medium',
+        notes = data.notes or '',
+        emergency = data.emergency or false,
+        coords = getPlayerCoords()
+    })
 
-.incident-item.active {
-    border-color: #ffd166;
-    background: rgba(255, 209, 102, 0.08);
-}
+    cb('ok')
+end)
 
-.incident-item h4 {
-    margin: 0 0 8px 0;
-    font-size: 0.92rem;
-}
+RegisterNUICallback('setStatus', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
 
-.incident-meta {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.7rem;
-    color: #d1e7ff;
-}
+    TriggerServerEvent('ak4y_dispatcher:setStatus', data.id, data.status)
+    cb('ok')
+end)
 
-.priority-badge {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-size: 0.66rem;
-    font-weight: 700;
-    text-transform: uppercase;
-}
+RegisterNUICallback('setPriority', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
 
-.priority-low { background: rgba(90, 210, 120, 0.18); color: #98edb0; }
-.priority-medium { background: rgba(255, 198, 73, 0.18); color: #ffd66d; }
-.priority-high { background: rgba(255, 95, 95, 0.18); color: #ffafaf; }
+    TriggerServerEvent('ak4y_dispatcher:setPriority', data.id, data.priority)
+    cb('ok')
+end)
 
-.content {
-    flex: 1;
-    padding: 18px 22px;
-    box-sizing: border-box;
-}
+RegisterNUICallback('requestBackup', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
 
-.top-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 18px;
-}
+    TriggerServerEvent('ak4y_dispatcher:requestBackup', data.id, data.backupType or 'Záloha')
+    cb('ok')
+end)
 
-.top-bar h2 {
-    margin: 0;
-}
+RegisterNUICallback('panicButton', function(_, cb)
+    TriggerServerEvent('ak4y_dispatcher:panicButton')
+    cb('ok')
+end)
 
-.top-bar p {
-    margin: 6px 0 0 0;
-    color: #afcfeb;
-    font-size: 0.78rem;
-}
+RegisterNUICallback('blockArea', function(data, cb)
+    local radius = data and data.radius or 100.0
+    TriggerServerEvent('ak4y_dispatcher:blockArea', getPlayerCoords(), radius)
+    cb('ok')
+end)
 
-.buttons {
-    display: flex;
-    gap: 8px;
-}
+RegisterNUICallback('clearHistory', function(_, cb)
+    TriggerServerEvent('ak4y_dispatcher:clearHistory')
+    cb('ok')
+end)
 
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 14px;
-    margin-bottom: 18px;
-}
+RegisterNUICallback('removeIncident', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
 
-.stat-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    padding: 14px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
+    TriggerServerEvent('ak4y_dispatcher:removeIncident', data.id)
+    cb('ok')
+end)
 
-.stat-card span {
-    color: #abd7ff;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-}
+RegisterNUICallback('registerResponder', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
 
-.stat-card strong {
-    font-size: 2rem;
-}
+    TriggerServerEvent('ak4y_dispatcher:registerResponder', data.id)
+    cb('ok')
+end)
 
-.stat-card.yellow strong { color: #ffd166; }
-.stat-card.red strong { color: #ff8b8b; }
-.stat-card.green strong { color: #7fe5a0; }
+RegisterNUICallback('setWaypoint', function(data, cb)
+    if not data or not data.id then
+        cb('error')
+        return
+    end
 
-.detail-panel {
-    background: rgba(255,255,255,0.035);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    min-height: 430px;
-    padding: 20px;
-    box-sizing: border-box;
-}
+    TriggerServerEvent('ak4y_dispatcher:waypointIncident', data.id)
+    cb('ok')
+end)
 
-.empty-state {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    height: 100%;
-    color: #afc9e3;
-}
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(100)
+        if isOpen then
+            DisableControlAction(0, 1, true)
+            DisableControlAction(0, 2, true)
+            DisableControlAction(0, 24, true)
+            DisableControlAction(0, 25, true)
+            DisableControlAction(0, 45, true)
+            DisableControlAction(0, 140, true)
+            DisableControlAction(0, 142, true)
+            DisableControlAction(0, 263, true)
+            DisableControlAction(0, 264, true)
+            DisableControlAction(0, 257, true)
+        end
+    end
+end)
 
-.detail-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-}
-
-.detail-header h3 {
-    margin: 0;
-    font-size: 1.4rem;
-}
-
-.detail-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 18px;
-}
-
-.detail-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-}
-
-.detail-box {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 12px;
-}
-
-.detail-box h4 {
-    margin: 0 0 10px 0;
-    font-size: 0.72rem;
-    color: #aee0ff;
-    text-transform: uppercase;
-}
-
-.detail-box p {
-    margin: 6px 0;
-}
-
-.statusSelect,
-.prioritySelect {
-    width: 200px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.04);
-    color: white;
-}
-
-.history-box {
-    margin-top: 18px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 12px;
-}
-
-.history-box h4 {
-    margin-top: 0;
-    color: #aee0ff;
-    text-transform: uppercase;
-    font-size: 0.72rem;
-}
-
-.history-list {
-    margin: 0;
-    padding-left: 18px;
-    color: #dceeff;
-    font-size: 0.78rem;
-}
-
-.history-list li {
-    margin: 6px 0;
-}
-
-@media (max-width: 1000px) {
-    .stats-grid, .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (max-width: 760px) {
-    #app { flex-direction: column; }
-    .sidebar { width: 100%; max-height: 52vh; }
-    .stats-grid, .detail-grid { grid-template-columns: 1fr; }
-}
+print('^2[AK4Y Dispatcher] Client script loaded!^7')
